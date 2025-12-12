@@ -1,4 +1,4 @@
-# Hotel Booking System - Docker Compose Setup
+# Hotel Booking System - Docker compose setup for local development
 
 Complete microservices architecture for hotel booking system with unified Docker orchestration.
 
@@ -41,8 +41,11 @@ Clone all 4 microservice repositories into the same parent folder:
 
 # Clone all services
 https://github.com/Patsino/hotel-booking-users-service
+
 https://github.com/Patsino/hotel-booking-hotels-service
+
 https://github.com/Patsino/hotel-booking-reservations-service
+
 https://github.com/Patsino/hotel-booking-payments-service
 
 ### Step 2: Configure Environment Variables
@@ -163,7 +166,10 @@ docker exec -it hotel-booking-sqlserver /opt/mssql-tools18/bin/sqlcmd -S localho
 
 All services expose Swagger UI with full API documentation:
 Users Service: http://localhost:8081/swagger
+
 Hotels Service: http://localhost:8082/swagger
+
 Reservations Service: http://localhost:8083/swagger
+
 Payments Service: http://localhost:8084/swagger
 
