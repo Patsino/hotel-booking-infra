@@ -1,0 +1,309 @@
+# ===========================================
+# Hotel Booking System - Unified Docker Compose
+# ===========================================
+# Orchestrates all 4 microservices with shared SQL Server
+# ===========================================
+# SETUP:
+# 1. Clone all 4 repositories into this folder:
+#    - hotel-booking-users-service/
+#    - hotel-booking-hotels-service/
+#    - hotel-booking-reservations-service/
+#    - hotel-booking-payments-service/
+# 2. Copy .env.example to .env and fill in secrets
+# 3. Run: docker-compose up --build
+# ===========================================
+# Port Mapping:
+#   - 1433  → SQL Server
+#   - 8081  → users-service
+#   - 8082  → hotels-service
+#   - 8083  → reservations-service
+#   - 8084  → payments-service
+# ===========================================
+
+services:
+  # ===========================================
+  # Shared SQL Server Database
+  # ===========================================
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: hotel-booking-sqlserver
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD}
+      - MSSQL_PID=Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P '${MSSQL_SA_PASSWORD}' -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    networks:
+      - hotel-booking-network
+    restart: unless-stopped
+
+  # ===========================================
+  # Users Service (Port 8081)
+  # ===========================================
+  users-service:
+    build:
+      context: ./hotel-booking-users-service
+      dockerfile: Dockerfile
+    image: hotel-docker-users-service:1.0.0
+    container_name: hotel-booking-users-service
+    environment:
+      # ASP.NET Core
+      - ASPNETCORE_ENVIRONMENT=Development
+      
+      # Database - Shared SQL Server
+      - ConnectionStrings__HotelBookingDatabase=Server=sqlserver,1433;Database=HotelBooking;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True;
+      
+      # JWT Configuration
+      - Jwt__SecretKey=${JWT_SECRET_KEY}
+      - Jwt__Issuer=HotelBooking
+      - Jwt__Audience=HotelBookingUsers
+      - Jwt__ExpirationMinutes=60
+      - Jwt__RefreshTokenExpirationDays=7
+      
+      # Encryption
+      - Encryption__Key=${ENCRYPTION_KEY}
+      - Encryption__IV=${ENCRYPTION_IV}
+      
+      # Inter-service URLs (Docker network)
+      - ServiceUrls__Reservations=http://reservations-service:8080
+      - ServiceUrls__Hotels=http://hotels-service:8080
+      - ServiceUrls__Payments=http://payments-service:8080
+      - ServiceUrls__Users=http://users-service:8080
+      
+      # API Keys for service-to-service auth
+      - ApiKeys__Current=${USERS_SERVICE_API_KEY}
+      - ApiKeys__Services__UsersService=${USERS_SERVICE_API_KEY}
+      - ApiKeys__Services__HotelsService=${HOTELS_SERVICE_API_KEY}
+      - ApiKeys__Services__ReservationsService=${RESERVATIONS_SERVICE_API_KEY}
+      - ApiKeys__Services__PaymentsService=${PAYMENTS_SERVICE_API_KEY}
+      
+      # GDPR Export Path
+      - Gdpr__ExportBasePath=/app/gdpr-exports
+      
+      # Logging
+      - Logging__LogLevel__Default=Information
+      - Logging__LogLevel__Microsoft.AspNetCore=Warning
+      - Logging__LogLevel__Microsoft.EntityFrameworkCore=Warning
+      
+      # Seeding
+      - Seeding__DefaultPassword=${SEEDING_DEFAULT_PASSWORD}
+    ports:
+      - "8081:8080"
+    volumes:
+      - gdpr-exports:/app/gdpr-exports
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    networks:
+      - hotel-booking-network
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:8080/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  # ===========================================
+  # Hotels Service (Port 8082)
+  # ===========================================
+  hotels-service:
+    build:
+      context: ./hotel-booking-hotels-service
+      dockerfile: Dockerfile
+    image: hotel-docker-hotels-service:1.0.0
+    container_name: hotel-booking-hotels-service
+    environment:
+      # ASP.NET Core
+      - ASPNETCORE_ENVIRONMENT=Development
+      
+      # Database - Shared SQL Server
+      - ConnectionStrings__HotelBookingDatabase=Server=sqlserver,1433;Database=HotelBooking;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True;
+      
+      # JWT Configuration
+      - Jwt__SecretKey=${JWT_SECRET_KEY}
+      - Jwt__Issuer=HotelBooking
+      - Jwt__Audience=HotelBookingUsers
+      - Jwt__ExpirationMinutes=60
+      
+      # Encryption
+      - Encryption__Key=${ENCRYPTION_KEY}
+      - Encryption__IV=${ENCRYPTION_IV}
+      
+      # Inter-service URLs (Docker network)
+      - ServiceUrls__Reservations=http://reservations-service:8080
+      - ServiceUrls__Hotels=http://hotels-service:8080
+      - ServiceUrls__Payments=http://payments-service:8080
+      - ServiceUrls__Users=http://users-service:8080
+      
+      # API Keys for service-to-service auth
+      - ApiKeys__Current=${HOTELS_SERVICE_API_KEY}
+      - ApiKeys__Services__UsersService=${USERS_SERVICE_API_KEY}
+      - ApiKeys__Services__HotelsService=${HOTELS_SERVICE_API_KEY}
+      - ApiKeys__Services__ReservationsService=${RESERVATIONS_SERVICE_API_KEY}
+      - ApiKeys__Services__PaymentsService=${PAYMENTS_SERVICE_API_KEY}
+      
+      # Logging
+      - Logging__LogLevel__Default=Information
+      - Logging__LogLevel__Microsoft.AspNetCore=Warning
+      - Logging__LogLevel__Microsoft.EntityFrameworkCore=Warning
+    ports:
+      - "8082:8080"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    networks:
+      - hotel-booking-network
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:8080/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  # ===========================================
+  # Reservations Service (Port 8083)
+  # ===========================================
+  reservations-service:
+    build:
+      context: ./hotel-booking-reservations-service
+      dockerfile: Dockerfile
+    image: hotel-docker-reservations-service:1.0.0
+    container_name: hotel-booking-reservations-service
+    environment:
+      # ASP.NET Core
+      - ASPNETCORE_ENVIRONMENT=Development
+      
+      # Database - Shared SQL Server
+      - ConnectionStrings__HotelBookingDatabase=Server=sqlserver,1433;Database=HotelBooking;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True;
+      
+      # JWT Configuration
+      - Jwt__SecretKey=${JWT_SECRET_KEY}
+      - Jwt__Issuer=HotelBooking
+      - Jwt__Audience=HotelBookingUsers
+      - Jwt__ExpirationMinutes=60
+      
+      # Encryption
+      - Encryption__Key=${ENCRYPTION_KEY}
+      - Encryption__IV=${ENCRYPTION_IV}
+      
+      # Inter-service URLs (Docker network)
+      - ServiceUrls__Reservations=http://reservations-service:8080
+      - ServiceUrls__Hotels=http://hotels-service:8080
+      - ServiceUrls__Payments=http://payments-service:8080
+      - ServiceUrls__Users=http://users-service:8080
+      
+      # API Keys for service-to-service auth
+      - ApiKeys__Current=${RESERVATIONS_SERVICE_API_KEY}
+      - ApiKeys__Services__UsersService=${USERS_SERVICE_API_KEY}
+      - ApiKeys__Services__HotelsService=${HOTELS_SERVICE_API_KEY}
+      - ApiKeys__Services__ReservationsService=${RESERVATIONS_SERVICE_API_KEY}
+      - ApiKeys__Services__PaymentsService=${PAYMENTS_SERVICE_API_KEY}
+      
+      # Logging
+      - Logging__LogLevel__Default=Information
+      - Logging__LogLevel__Microsoft.AspNetCore=Warning
+      - Logging__LogLevel__Microsoft.EntityFrameworkCore=Warning
+    ports:
+      - "8083:8080"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    networks:
+      - hotel-booking-network
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:8080/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  # ===========================================
+  # Payments Service (Port 8084)
+  # ===========================================
+  payments-service:
+    build:
+      context: ./hotel-booking-payments-service
+      dockerfile: Dockerfile
+    image: hotel-docker-payments-service:1.0.0
+    container_name: hotel-booking-payments-service
+    environment:
+      # ASP.NET Core
+      - ASPNETCORE_ENVIRONMENT=Development
+      
+      # Database - Shared SQL Server
+      - ConnectionStrings__HotelBookingDatabase=Server=sqlserver,1433;Database=HotelBooking;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True;
+      
+      # JWT Configuration
+      - Jwt__SecretKey=${JWT_SECRET_KEY}
+      - Jwt__Issuer=HotelBooking
+      - Jwt__Audience=HotelBookingUsers
+      - Jwt__ExpirationMinutes=60
+      
+      # Encryption
+      - Encryption__Key=${ENCRYPTION_KEY}
+      - Encryption__IV=${ENCRYPTION_IV}
+      
+      # Stripe Configuration (for payment processing)
+      - Stripe__SecretKey=${STRIPE_SECRET_KEY}
+      - Stripe__PublishableKey=${STRIPE_PUBLISHABLE_KEY}
+      - Stripe__WebhookSecret=${STRIPE_WEBHOOK_SECRET}
+      
+      # Inter-service URLs (Docker network)
+      - ServiceUrls__Reservations=http://reservations-service:8080
+      - ServiceUrls__Hotels=http://hotels-service:8080
+      - ServiceUrls__Payments=http://payments-service:8080
+      - ServiceUrls__Users=http://users-service:8080
+      
+      # API Keys for service-to-service auth
+      - ApiKeys__Current=${PAYMENTS_SERVICE_API_KEY}
+      - ApiKeys__Services__UsersService=${USERS_SERVICE_API_KEY}
+      - ApiKeys__Services__HotelsService=${HOTELS_SERVICE_API_KEY}
+      - ApiKeys__Services__ReservationsService=${RESERVATIONS_SERVICE_API_KEY}
+      - ApiKeys__Services__PaymentsService=${PAYMENTS_SERVICE_API_KEY}
+      
+      # Logging
+      - Logging__LogLevel__Default=Information
+      - Logging__LogLevel__Microsoft.AspNetCore=Warning
+      - Logging__LogLevel__Microsoft.EntityFrameworkCore=Warning
+    ports:
+      - "8084:8080"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    networks:
+      - hotel-booking-network
+    healthcheck:
+      test: wget --quiet --tries=1 --spider http://localhost:8080/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+# ===========================================
+# Volumes
+# ===========================================
+volumes:
+  sqlserver-data:
+    name: hotel-booking-sqlserver-data
+  gdpr-exports:
+    name: hotel-booking-gdpr-exports
+
+# ===========================================
+# Networks
+# ===========================================
+networks:
+  hotel-booking-network:
+    name: hotel-booking-network
+    driver: bridge
