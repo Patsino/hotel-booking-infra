@@ -81,7 +81,7 @@ Edit `.env` and fill in:
 
 ```powershell
 # Build and start all services
-docker-compose up --build -d
+docker-compose --env-file .env.docker up -d --build
 ```
 
 ### Step 4: Verify Services
